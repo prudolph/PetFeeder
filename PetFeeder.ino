@@ -70,7 +70,7 @@ void setup() {
   delay(100);
 
   WiFiManager wifiManager;
-  wifiManager.autoConnect("CatFeeder_0", "Duc7547ie");
+  wifiManager.autoConnect("CatFeeder_0", "password");
   wifiManager.setConfigPortalTimeout(30);
 
  Serial.println("connected-------------)");
