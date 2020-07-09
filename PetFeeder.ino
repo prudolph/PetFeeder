@@ -1,27 +1,44 @@
-#include <Servo.h>
-#include <SimpleTimer.h>
 
+#include "SimpleTimer.h"
+#include <Servo.h>
+#include <EEPROM.h>
 //Wifi Libraries
 #include <ESP8266WiFi.h>
+#include <ESPAsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <FS.h>
+//https://randomnerdtutorials.com/esp8266-web-server-spiffs-nodemcu/
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+
 #include <ESP8266HTTPClient.h>
-#include <ESP8266WebServer.h>
+
 #include <DNSServer.h>            //Local DNS Server used for redirecting all requests to the configuration portal
-#include <ESP8266WebServer.h>     //Local WebServer used to serve the configuration portal
-#include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
-#include <ESP8266mDNS.h>
 #include <Time.h>
 
-#define OPEN_POS 5
-#define CLOSE_POS 155
+
+
+// Define NTP Client to get time
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org");
 
 
 SimpleTimer feedTimer;
 unsigned long timerStartTime; 
 int timerId;
 
+
+// ConfigData
+  struct { 
+    int openPos = 5;
+    int closePos = 155;
+  } configData;
+uint configDataAddress = 0;
+
+
 Servo servo;
 
-ESP8266WebServer server(80);
+AsyncWebServer server(80);
 
 int feedingDelay=24;
 bool SMSNotificationEnabled=false;
@@ -39,53 +56,22 @@ void updateTimerDuration();
 void sendSMS();
 unsigned long getRemainingTime();
 
-const String HTML_HEADER =
-"<!DOCTYPE HTML>"
-"<html>"
-"<head>"
-"<meta name = \"viewport\" content = \"width = device-width, initial-scale = 1.0, maximum-scale = 1.0, user-scalable=0\">"
-"<title>Feeder Configuration</title>"
-"<style>"
-"\"body { background-color: #808080; font-family: Arial, Helvetica, Sans-Serif; Color: #000000; }\""
-"</style>"
-"<script>"
- "function buttonCallback(String mode ){"
- "console.log(\"Mode\"+mode);"
- "var xhttp = new XMLHttpRequest();"
- "xhttp.onreadystatechange = function() {"
- "xhttp.open(\"GET\", mode, true); xhttp.send();"
- "}"
-"</script>"
-"</head>"
-"<body>";
-
-
-const String HTML_FOOTER = "</body></html>";
-
-const String HTML_BUTTONS ="<div><button onclick=\"location.href='/open';\" id=\"open\">Open Lid</button><button  onclick=\"location.href='/close';\" id=\"close\">Close Lid</button><button onclick=\"location.href='/restart';\" id=\"restart\">Restart Timer</button></div>";
-const String HTML_FORM =
-"<FORM action=\"/submitSettings\" method=\"post\">"
-"<P>"
-"<INPUT type=\"number\" name=\"DELAY\" value=\"1\">Delay(hours)<BR>"
-"<INPUT type=\"submit\" value=\"Send\"> <INPUT type=\"reset\">"
-"</P>"
-"</FORM>";
-
 void setup() {
-  //Setup Servo
-  openLid();
-  
+
+    Serial.begin(115200);
+    delay(500);
+    
+
   timerId = feedTimer.setInterval(120000, openLid);
   updateTimerDuration();
   
-  Serial.begin(115200);
-  delay(100);
 
-  WiFiManager wifiManager;
-  wifiManager.autoConnect("CatFeeder_0", "password");
-  wifiManager.setConfigPortalTimeout(30);
 
- Serial.println("connected-------------)");
+////  WiFiManager wifiManager;
+//  wifiManager.autoConnect("CatFeeder_0", "password");
+//  wifiManager.setConfigPortalTimeout(30);
+
+ Serial.println("!!!!connected-------------)");
 
   Serial.println("");
   Serial.println("WiFi connected");  
@@ -96,60 +82,181 @@ void setup() {
   Serial.print("Gateway: ");
   Serial.println(WiFi.gatewayIP());
 
- if (MDNS.begin("CatFeeder")) {  //Start mDNS
-  
+//ReadConfigSettings:
+  EEPROM.begin(512);
+  EEPROM.get(configDataAddress,configData);
+  Serial.println("Old values are: openpos"+String(configData.openPos)+", closePos"+String(configData.closePos));
+
+
+if(!SPIFFS.begin()){
+  Serial.println("An Error has occurred while mounting SPIFFS");
+ 
 }
 
-  server.on("/", handleRoot);
-  server.on("/submitSettings", handleFormSubmit);
+
+// Initialize a NTPClient to get time
+  timeClient.begin();
+  // Set offset time in seconds to adjust for your timezone, for example:
+  // GMT +1 = 3600
+  // GMT +8 = 28800
+  // GMT -1 = -3600
+  // GMT 0 = 0
+  timeClient.setTimeOffset(-25200);
+
+
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SPIFFS, "/index.html");
+  });
+
+  //Dispense Control APIS 
+  server.on("/api/open", HTTP_GET, [](AsyncWebServerRequest *request){
+    openLid();
+    request->send(200, "text/json","{\"task\":\"open\",\"status\":\"complete\"}");
+  });
   
-  server.on("/open", handleOpenLid);
-  server.on("/close", handleCloseLid);
-  server.on("/restart", handleRestart);
-  server.onNotFound(handleNotFound);
+  server.on("/api/close", HTTP_GET, [](AsyncWebServerRequest *request){
+      closeLid();
+     request->send(200, "text/json","{\"task\":\"close\",\"status\":\"complete\"}");
+  });
+
+   server.on("/api/dispense", HTTP_GET, [](AsyncWebServerRequest *request){
+      closeLid();
+      delay(500);
+      openLid();
+      delay(500);
+      closeLid();
+      
+     request->send(200, "text/json","{'task':'dispense','status':'complete'}");
+  });
+
+
+   server.on("/api/openpos", HTTP_GET, [](AsyncWebServerRequest *request){  
+     request->send(200, "text/json","{\"task\":\"getopenpos\",\"result\":\""+String(configData.openPos)+"\"}");
+  });
+    server.on("/api/closepos", HTTP_GET, [](AsyncWebServerRequest *request){  
+     request->send(200, "text/json","{\"task\":\"getopenpos\",\"result\":\""+String(configData.closePos)+"\"}");
+  });
+
+
+    server.on("/api/openpos", HTTP_POST, [](AsyncWebServerRequest *request){  
+      int params = request->params();      
+      AsyncWebParameter* p = request->getParam(0);
+      //Serial.printf("POST PARAM [%s]: %s\n", p->name().c_str(), p->value().c_str());
+      int paramVal= atoi(p->name().c_str());
+      configData.openPos = paramVal;
+      EEPROM.put(configDataAddress, configData);
+      EEPROM.commit();  
+      //Serial.println("Old values are: openpos"+String(configData.openPos)+", closePos"+String(configData.closePos));
+      request->send(200, "text/json","{\"task\":\"setopenpos\",\"result\":\""+String(configData.openPos)+"\"}");
+  });
+
+
+
+    server.on("/api/closepos", HTTP_POST, [](AsyncWebServerRequest *request){  
+      int params = request->params();      
+      AsyncWebParameter* p = request->getParam(0);
+      //Serial.printf("POST PARAM [%s]: %s\n", p->name().c_str(), p->value().c_str());
+       int paramVal= atoi(p->name().c_str());
+       configData.closePos = paramVal;
+       EEPROM.put(configDataAddress, configData);
+       EEPROM.commit();  
+       request->send(200, "text/json","{\"task\":\"setclosepos\",\"result\":\""+String(configData.closePos)+"\"}");
+  });
+
+
+
+
+server.on("/api/time", HTTP_GET, [](AsyncWebServerRequest *request){
+      unsigned long epochTime = timeClient.getEpochTime();
+      Serial.print("Epoch Time: ");
+      Serial.println(epochTime);
+
+      char buf[60];
+      sprintf(buf, "{\"task\":\"open\",\"status\":\"%lu\"}", epochTime);
+      
+     request->send(200, "text/json",buf);
+  });
+
+ 
+//  server.on("/submitSettings", handleFormSubmit);  
+//  server.on("/open", handleOpenLid);
+//  server.on("/close", handleCloseLid);
+//  server.on("/restart", handleRestart);
+//  server.onNotFound(handleNotFound);
+
+
   server.begin();
-  Serial.println("HTTP server started");
+
   
 }
 
-void handleRoot() {
-  unsigned long remainingTime = getRemainingTime();
-  String timeRemaining= "Remaining Time Hours: "+String(remainingTime/(60*60*1000))+ " Minutes:"+ String((remainingTime/(60*1000))%60);
-  server.send(200, "text/html", HTML_HEADER+"<div class=\"time\">"+timeRemaining +"<div>" +HTML_BUTTONS+HTML_FORM+HTML_FOOTER);
+//void handleRoot() {
+//  unsigned long remainingTime = getRemainingTime();
+//  String timeRemaining= "Remaining Time Hours: "+String(remainingTime/(60*60*1000))+ " Minutes:"+ String((remainingTime/(60*1000))%60);
+//  server.send(200, "text/html", HTML_HEADER+"<div class=\"time\">"+timeRemaining +"<div>" +HTML_BUTTONS+HTML_FORM+HTML_FOOTER);
+//
+//
+//
+//  Serial.println(timeRemaining);
+//}
 
+//void handleNotFound() {
+//  
+//  String message = "File Not Found\n\n";
+//  message += "URI: ";
+//  message += server.uri();
+//  message += "\nMethod: ";
+//  message += ( server.method() == HTTP_GET ) ? "GET" : "POST";
+//  message += "\nArguments: ";
+//  message += server.args();
+//  message += "\n";
+//
+//  for ( uint8_t i = 0; i < server.args(); i++ ) {
+//    message += " " + server.argName ( i ) + ": " + server.arg ( i ) + "\n";
+//  }
+//
+//  server.send ( 404, "text/plain", message );
+//  
+//}
 
+// Replaces placeholder with LED state value
+String processor(const String& var){
 
-  Serial.println(timeRemaining);
+  return "from processor";
+//  
+//  Serial.println(var);
+//  if(var == "STATE"){
+//    if(digitalRead(ledPin)){
+//      ledState = "ON";
+//    }
+//    else{
+//      ledState = "OFF";
+//    }
+//    Serial.print(ledState);
+//    return ledState;
+//  }
+//  else if (var == "TEMPERATURE"){
+//    return getTemperature();
+//  }
+//  else if (var == "HUMIDITY"){
+//    return getHumidity();
+//  }
+//  else if (var == "PRESSURE"){
+//    return getPressure();
+//  }  
 }
 
-void handleNotFound() {
-  
-  String message = "File Not Found\n\n";
-  message += "URI: ";
-  message += server.uri();
-  message += "\nMethod: ";
-  message += ( server.method() == HTTP_GET ) ? "GET" : "POST";
-  message += "\nArguments: ";
-  message += server.args();
-  message += "\n";
-
-  for ( uint8_t i = 0; i < server.args(); i++ ) {
-    message += " " + server.argName ( i ) + ": " + server.arg ( i ) + "\n";
-  }
-
-  server.send ( 404, "text/plain", message );
-  
-}
-void handleFormSubmit(){
-    Serial.println("Form Submitted");
-    String feedingDelayValue  = server.arg("DELAY");
-    feedingDelay=feedingDelayValue.toInt();
-    Serial.println("Feeding Delay(hours): ");
-    Serial.println(feedingDelay);
-    updateTimerDuration();
-    
-}
-
+//
+//void handleFormSubmit(){
+//    Serial.println("Form Submitted");
+//    String feedingDelayValue  = server.arg("DELAY");
+//    feedingDelay=feedingDelayValue.toInt();
+//    Serial.println("Feeding Delay(hours): ");
+//    Serial.println(feedingDelay);
+//    updateTimerDuration();
+//    
+//}
+//
 void updateTimerDuration(){
   SMSNotificationEnabled=true;
   feedTimer.deleteTimer(timerId);
@@ -160,29 +267,18 @@ void updateTimerDuration(){
   timerStartTime = millis();
   String response = " Timer Set for "+ String(feedingDelay)+ " Hours";
   Serial.println("Timer Started");
-  server.send(200, "text/plain", response);
+  //server.send(200, "text/plain", response);
  }
 
-void handleOpenLid(){
-     Serial.println("HANDLE OPEN");
-     SMSNotificationEnabled=false;
-     openLid();
-     SMSNotificationEnabled=true;
-     server.send(200, "text/plain", "Opened");
- }
-void handleCloseLid(){
-     Serial.println("HANDLE ClOSE");
-      closeLid();
-      server.send(200, "text/plain", "Closed");
- }
-void handleRestart(){
-     Serial.println("HANDLE RESTART");
-     feedTimer.restartTimer(timerId);
-     timerStartTime = millis();
-     Serial.println("Timer Restarted");
-     server.send(200, "text/plain", "Timer Restarted");
-     SMSNotificationEnabled=true;
- }
+
+//void handleRestart(){
+//     Serial.println("HANDLE RESTART");
+//     feedTimer.restartTimer(timerId);
+//     timerStartTime = millis();
+//     Serial.println("Timer Restarted");
+//     server.send(200, "text/plain", "Timer Restarted");
+//     SMSNotificationEnabled=true;
+// }
 
 unsigned long getRemainingTime(){
   
@@ -194,8 +290,9 @@ unsigned long getRemainingTime(){
 }
 
 void loop() {
+   timeClient.update();
   feedTimer.run();
-  server.handleClient();
+  //server.handleClient();
 }
 
 
@@ -210,11 +307,11 @@ void openLid() {
   int currentPosition = servo.read();
   Serial.println("Current Pos");
   Serial.println(currentPosition);
-  for (int pos = currentPosition ; pos >= OPEN_POS; pos -= 1) { // goes from 0 degrees to 180 degrees
+  for (int pos = currentPosition ; pos >= configData.openPos; pos -= 1) { // goes from 0 degrees to 180 degrees
     Serial.println("-");
     Serial.print("Current Pos");
     Serial.print( pos);
-    if(pos == OPEN_POS) break;
+    if(pos == configData.openPos) break;
     // in steps of 1 degree
     servo.write(pos);              // tell servo to go to position in variable 'pos'
     delay(15);                       // waits 15ms for the servo to reach the position
@@ -224,18 +321,17 @@ void openLid() {
    delay(500);   
   
   currentPosition = servo.read();
-  for (int pos = currentPosition ; pos <= OPEN_POS+60; pos += 1) { // goes from 0 degrees to 180 degrees
+  for (int pos = currentPosition ; pos <= configData.openPos+60; pos += 1) { // goes from 0 degrees to 180 degrees
     Serial.println("-");
     Serial.print("Current Pos");
     Serial.print( pos);
-    if(pos == OPEN_POS+60) break;
+    if(pos == configData.openPos+60) break;
     // in steps of 1 degree
     servo.write(pos);              // tell servo to go to position in variable 'pos'
     delay(15);                       // waits 15ms for the servo to reach the position
   }
-  sendSMS();
+  //sendSMS();
   servo.detach();
- 
 }
 
 
@@ -247,18 +343,17 @@ void closeLid() {
   int currentPosition = servo.read();
   Serial.println("Current Pos");
   Serial.println(currentPosition);
-  for (int pos = currentPosition ; pos <= CLOSE_POS; pos += 1) { // goes from 0 degrees to 180 degrees
+  for (int pos = currentPosition ; pos <= configData.closePos; pos += 1) { // goes from 0 degrees to 180 degrees
     Serial.println("+");
     Serial.print("Current Pos");
     Serial.print( servo.read());
-    if(pos == CLOSE_POS) break;
+    if(pos == configData.closePos) break;
     // in steps of 1 degree
     servo.write(pos);              // tell servo to go to position in variable 'pos'
     delay(15);                       // waits 15ms for the servo to reach the position
      
   }
   
-
   servo.detach();
 }
 
@@ -281,5 +376,3 @@ void sendSMS(){
   http.end();
      
   }
-
-
