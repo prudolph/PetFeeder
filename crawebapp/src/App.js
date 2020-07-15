@@ -6,20 +6,24 @@ import "react-datepicker/dist/react-datepicker.css";
 import ToggleButton from 'react-toggle-button'
 import { Donut } from 'react-dial-knob'
 
+const SEC_IN_HOUR=3600;
+const TIME_OFFSET_HOURS=-7;
 class App extends React.Component {
   constructor(props) {
     super(props);
     this.state = {
       currentDate: new Date(),
-      recurring: false,
+      daily: false,
       openPos: 0,
       closePos: 0,
       fetchedSettings: false
     };
+    this.getDeviceTime=this.getDeviceTime.bind(this);
     this.getOpenPosition = this.getOpenPosition.bind(this);
     this.getClosePosition = this.getClosePosition.bind(this);
-this.setOpenPosition=this.setOpenPosition.bind(this);
-this.setClosePosition=this.setClosePosition.bind(this)
+    this.setOpenPosition = this.setOpenPosition.bind(this);
+    this.setClosePosition = this.setClosePosition.bind(this);
+    this.addFeedingTime = this.addFeedingTime.bind(this);
   }
 
   openFeeder() {
@@ -56,19 +60,33 @@ this.setClosePosition=this.setClosePosition.bind(this)
   }
 
 
-
+  async getDeviceTime() {
+    return new Promise(async (resolve, reject) => {
+      try {
+       const response = await axios.get('/api/time')
+        const deviceEpochSeconds = response.data.status
+       
+        const updatedTimeStamp=new Date(deviceEpochSeconds*1000);
+        this.setState({ currentDate: updatedTimeStamp })
+        resolve(new Date(deviceEpochSeconds*1000));
+      }
+      catch (error) {
+        reject(error);
+      }
+    })
+  }
   async setOpenPosition(isInteracting) {
-    if(!this.state.fetchedSettings)return;
+    if (!this.state.fetchedSettings) return;
     return new Promise(async (resolve, reject) => {
       if (!isInteracting) {
-        try{
+        try {
           const response = await axios.post('/api/openpos?' + this.state.openPos)
           return resolve(response)
         }
-        catch(error) {
+        catch (error) {
           return reject(error)
         }
-      }else{
+      } else {
         return resolve();
       }
     })
@@ -76,7 +94,7 @@ this.setClosePosition=this.setClosePosition.bind(this)
 
 
   async getOpenPosition() {
-    return new Promise(async(resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       try {
         const response = await axios.get('/api/openpos')
         const openPos = response.data.result
@@ -90,26 +108,26 @@ this.setClosePosition=this.setClosePosition.bind(this)
   }
 
   async setClosePosition(isInteracting) {
-    if(!this.state.fetchedSettings)return;
-    return new Promise(async(resolve, reject) => {
+    if (!this.state.fetchedSettings) return;
+    return new Promise(async (resolve, reject) => {
 
       if (!isInteracting) {
-       try{
-        const response = await axios.post('/api/closepos?' + this.state.closePos)
+        try {
+          const response = await axios.post('/api/closepos?' + this.state.closePos)
           return resolve(response)
         }
-        catch(error) {
+        catch (error) {
           return reject(error);
         }
       }
-      else{
+      else {
         return resolve();
       }
     })
   }
 
   async getClosePosition() {
-    return new Promise(async(resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       try {
         const response = await axios.get('/api/closepos')
         const closePos = response.data.result
@@ -123,9 +141,19 @@ this.setClosePosition=this.setClosePosition.bind(this)
     })
   }
 
-
   addFeedingTime() {
-    console.log("Adding time: ");
+    return new Promise(async (resolve, reject) => {
+        try {
+          const timeOffestSeconds = TIME_OFFSET_HOURS*SEC_IN_HOUR;
+          const feedingTimeStamp = Math.floor( (this.state.currentDate.getTime() / 1000) ) 
+          console.log("Adding date: ", feedingTimeStamp);
+          const response = await axios.post('/api/addfeeddate?' + feedingTimeStamp)
+          return resolve(response)
+        }
+        catch (error) {
+          return reject(error);
+        }
+    })
   }
 
   renderAddDateEntry() {
@@ -134,36 +162,42 @@ this.setClosePosition=this.setClosePosition.bind(this)
         selected={this.state.currentDate}
         onChange={date => this.setState({ currentDate: date }, () => { console.log("updated: ", this.state.currentDate) })}
         showTimeSelect
-        timeFormat="HH:mm"
-        timeIntervals={15}
+        showTimeSelectOnly={this.state.daily}
+        timeFormat="hh:mm aa"
+        timeIntervals={1}
         timeCaption="time"
-        dateFormat="MMMM d, yyyy h:mm aa"
+        dateFormat={this.state.daily?"hh:mm aa" : "MMMM d, yyyy h:mm aa"}
       />
 
       <ToggleButton
         inactiveLabel={<div style={{ width: "50px", backgroundColor: "tomato" }}><p>Once</p></div>}
         activeLabel={<div style={{ width: "50px", backgroundColor: "cyan" }}><p>Daily</p></div>}
-        value={this.state.recurring}
+        value={this.state.daily}
         onToggle={(value) => {
           console.log("button toggled: ", value)
-          this.setState({ recurring: !this.state.recurring })
+          this.setState({ daily: !this.state.daily })
         }} />
-      <button onClick={this.openFeeder}>Add Feeding Time</button>
+
+      <button onClick={this.addFeedingTime}>Add Feeding Time</button>
     </div>
 
   }
 
   async componentDidMount() {
 
-    try{
-    await this.getOpenPosition();
-    await this.getClosePosition();
-    this.setState({
-      fetchedSettings:true
-    },()=>{
-      console.log("Fetched Settings")
-    })}
-    catch(error){
+    try {
+      await this.getDeviceTime();
+      await this.getOpenPosition();
+      await this.getClosePosition();
+   
+   
+      this.setState({
+        fetchedSettings: true
+      }, () => {
+        console.log("Fetched Settings")
+      })
+    }
+    catch (error) {
       console.log("Failed to fetch Settings: ", error)
     }
   }
@@ -175,7 +209,7 @@ this.setClosePosition=this.setClosePosition.bind(this)
         <button onClick={this.openFeeder}>Open</button>
         <button onClick={this.closeFeeder}>Close</button>
         <button onClick={this.dispenseFeeder}>Dispense</button>
-         {this.state.fetchedSettings && <div className="config"> 
+        {this.state.fetchedSettings && <div className="config">
           <Donut
             diameter={200}
             min={-180}
@@ -186,7 +220,7 @@ this.setClosePosition=this.setClosePosition.bind(this)
               donutColor: 'tomato'
             }}
             onValueChange={(value) => this.setState({ openPos: value })}
-            onInteractionChange={()=>this.setOpenPosition()}
+            onInteractionChange={() => this.setOpenPosition()}
             ariaLabelledBy={'open-label'}
           >
             <label id={'open-label'}>FeederOpenPosition</label>
@@ -202,12 +236,12 @@ this.setClosePosition=this.setClosePosition.bind(this)
               donutColor: 'cyan'
             }}
             onValueChange={(value) => this.setState({ closePos: value })}
-            onInteractionChange={()=>this.setClosePosition()}
+            onInteractionChange={() => this.setClosePosition()}
             ariaLabelledBy={'close-label'}
           >
             <label id={'close-label'}>FeederClosePosition</label>
           </Donut>
-          </div>}
+        </div>}
         {this.renderAddDateEntry()}
 
       </div>
