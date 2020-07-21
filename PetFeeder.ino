@@ -71,7 +71,6 @@ void setup() {
   Serial.begin(115200);
   delay(500);
      
-
   WiFi.begin(ssid, password);
   
   while (WiFi.status() != WL_CONNECTED) {
@@ -89,9 +88,10 @@ void setup() {
   EEPROM.begin(1024);
   EEPROM.get(configDataAddress, configData);
   delay(100);
-  if (configData.openPos == -1)configData.openPos = 0;
-  if (configData.closePos == -1)configData.closePos = 180;
-  if (configData.servoSpeed == -1)configData.servoSpeed = 15;
+  
+  if (configData.openPos == -1)    configData.openPos = 0;
+  if (configData.closePos == -1)   configData.closePos = 180;
+  if (configData.servoSpeed == -1) configData.servoSpeed = 15;
 
   Serial.println("Old values are: openpos" + String(configData.openPos) + ", closePos" + String(configData.closePos) + ", servospeed" + String(configData.servoSpeed));
 
@@ -160,17 +160,8 @@ void setupServer(){
     request->send(200, "text/json", buf);
   });
 
-  server.on("/api/addfeeddate", HTTP_POST, [](AsyncWebServerRequest * request) {
-    int params = request->params();
-    AsyncWebParameter* p = request->getParam(0);
-    //Serial.printf("POST PARAM [%s]: %s\n", p->name().c_str(), p->value().c_str());
-    time_t epochVal = atol(p->name().c_str());
-    int index = addfeeding(epochVal, false);
 
-    char buf[100];
-    sprintf(buf, "{\"task\":\"addfeedingtime\",\"status\":\"success\",\"index\":\"%d\" }", index);
-    request->send(200, "text/json", buf);
-  });
+
 
 
   server.on("/api/openpos", HTTP_GET, [](AsyncWebServerRequest * request) {
@@ -187,6 +178,8 @@ void setupServer(){
     //Serial.printf("POST PARAM [%s]: %s\n", p->name().c_str(), p->value().c_str());
     int paramVal = atoi(p->name().c_str());
     configData.openPos = paramVal;
+
+    setLidPos(  configData.openPos);
     EEPROM.put(configDataAddress, configData);
     EEPROM.commit();
     Serial.println("Old values are: openpos" + String(configData.openPos) + ", closePos" + String(configData.closePos));
@@ -201,6 +194,7 @@ void setupServer(){
     //Serial.printf("POST PARAM [%s]: %s\n", p->name().c_str(), p->value().c_str());
     int paramVal = atoi(p->name().c_str());
     configData.closePos = paramVal;
+     setLidPos(  configData.closePos);
     EEPROM.put(configDataAddress, configData);
     EEPROM.commit();
     Serial.println("Old values are: openpos" + String(configData.openPos) + ", closePos" + String(configData.closePos));
@@ -217,42 +211,50 @@ void setupServer(){
 
     char buf[60];
     sprintf(buf, "{\"task\":\"open\",\"status\":\"%lu\"}", epochTime);
-
     request->send(200, "text/json", buf);
   });
 
 
-  
+ 
+  server.on("/api/addfeeddate", HTTP_POST, [](AsyncWebServerRequest * request) {
+    int params = request->params();
+    AsyncWebParameter* p = request->getParam(0);
+    //Serial.printf("POST PARAM [%s]: %s\n", p->name().c_str(), p->value().c_str());
+    time_t epochVal = atol(p->name().c_str());
+    int index = addfeeding(epochVal, false);
 
-
+    char buf[100];
+    sprintf(buf, "{\"task\":\"addfeedingtime\",\"status\":\"success\",\"index\":\"%d\" }", index);
+    request->send(200, "text/json", buf);
+  });
 
   server.on("/api/feeddates", HTTP_GET, [](AsyncWebServerRequest * request) {
-    Serial.print("---\nSaved Feedings:");
-    Serial.print(feedDatesCount);
-    Serial.print("\n");
-    for (int i = 0; i < feedDatesCount; i++) {
+    String currentFeedDates="[";
+    for (int i = 0; i < feedDatesCount; i++) {  
       time_t timestamp = feedDates[i].feedDate;
       bool daily = feedDates[i].daily;
       bool completed = feedDates[i].completed;
-
-
-      Serial.print("index:");
-      Serial.print(i);
-      Serial.print(" timestamp:");
-      Serial.print(timestamp);
-      Serial.print(" daily:");
-      Serial.print(daily);
-
-      Serial.print("\n");
+      currentFeedDates+="{\"index\":"+String(i)+",\"time\":"+String(timestamp)+",\"daily\":"+String(daily)+"},";
     }
-    Serial.print("---\n");
-
-
+ 
+    currentFeedDates=currentFeedDates.substring(0,currentFeedDates.length() -1);
+    currentFeedDates+="]";
     char buf[100];
     sprintf(buf, "{\"task\":\"addfeedingtime\",\"status\":\"success\" }");
-    request->send(200, "text/json", buf);
+    request->send(200, "text/json", "{\"task\":\"getfeedingtimes\",\"result\":"+currentFeedDates+"}");
   });
 
+ server.on("/api/removefeeddate", HTTP_POST, [](AsyncWebServerRequest * request) {
+    int params = request->params();
+    AsyncWebParameter* p = request->getParam(0);
+    //Serial.printf("POST PARAM [%s]: %s\n", p->name().c_str(), p->value().c_str());
+    int indextoremove = atol(p->name().c_str());
+    removefeeding(indextoremove);
+    char buf[100];
+    sprintf(buf, "{\"task\":\"removefeedingtime\",\"status\":\"success\",\"index\":\"%d\" }", indextoremove);
+    request->send(200, "text/json", buf);
+  });
+  
   server.on("/api/clearfeedings", HTTP_POST, [](AsyncWebServerRequest * request) {
 
     for (int i = 0; i < MAX_FEEDINGS; i++) {
@@ -260,40 +262,33 @@ void setupServer(){
       feedDates[i].daily = false;
     }
     feedDatesCount = 0;
-
-
-
     EEPROM.put( feedingCountAddress , feedDatesCount );
     EEPROM.put( feedingDataAddress , feedDates );
     EEPROM.commit();
-    char buf[100];
-    sprintf(buf, "{\"task\":\"clearfeedings\",\"status\":\"success\" }");
-    request->send(200, "text/json", buf);
+    request->send(200, "text/json", "{\"task\":\"clearfeedings\",\"status\":\"success\" }");
   });
 
 
   server.on("/api/servospeed", HTTP_POST, [](AsyncWebServerRequest * request) {
+
     int params = request->params();
     AsyncWebParameter* p = request->getParam(0);
+    Serial.printf("POST PARAM [%s]: %s\n", p->name().c_str(), p->value().c_str());
+    int paramVal = atoi(p->name().c_str());
 
-    int servospeed = atoi(p->name().c_str());
-
-    Serial.print("Setting servospeed");
-    Serial.print(servospeed);
-    configData.servoSpeed = servospeed;
+    Serial.print("SETTING SERVO SPEED");
+    Serial.print(paramVal);
+    
+    configData.servoSpeed = paramVal;
 
     EEPROM.put(configDataAddress, configData);
     EEPROM.commit();
-
-    request->send(200, "text/json", "{\"task\":\"setspeed\",\"result\":\"" + String(configData.servoSpeed) + "\"}");
+    
+    request->send(200, "text/json",  "{\"task\":\"setspeed\",\"result\":\""+ String(configData.servoSpeed) +"\"}");
   });
 
   server.begin();
-
-  
-  
-  
-  
+ 
   }
 
 int addfeeding(time_t feedingTimestamp, bool daily ) {
@@ -314,6 +309,27 @@ int addfeeding(time_t feedingTimestamp, bool daily ) {
   } else {
     return -1;
   }
+}
+
+int removefeeding(int index ) {
+  Serial.print("removing feeding time: ");
+  Serial.println(index);
+
+   int currentFeedIndex=index;
+  feedDates[currentFeedIndex] = FeedDate();
+  feedDatesCount-=1;
+  
+
+  while(currentFeedIndex<MAX_FEEDINGS){
+       feedDates[currentFeedIndex]=feedDates[currentFeedIndex+1];
+       currentFeedIndex++;       
+  }
+  
+    EEPROM.put(feedingCountAddress, feedDatesCount);
+    EEPROM.put(feedingDataAddress, feedDates);
+    EEPROM.commit();
+    return feedDatesCount;
+
 }
 
 
@@ -402,6 +418,36 @@ void closeLid() {
   servo.detach();
 }
 
+
+void setLidPos(int targetPos) {
+  if(targetPos>=0 && targetPos<180 ){
+  servo.attach(0);
+
+  Serial.println("Open Feeder");
+
+  int currentPosition = servo.read();
+  Serial.println("Current Pos");
+  Serial.println(currentPosition);
+
+  Serial.println("Target Pos");
+  Serial.println(targetPos);
+
+if(currentPosition>targetPos){
+  for (int pos = currentPosition ; pos > targetPos; pos-=1)  { // goes from 0 degrees to 180 degrees
+    servo.write(pos);              // tell servo to go to position in variable 'pos'
+    delay(configData.servoSpeed);                       // waits 15ms for the servo to reach the position
+  }
+}else{
+
+ for (int pos = currentPosition ; pos <= targetPos; pos+=1) { 
+    servo.write(pos);              // tell servo to go to position in variable 'pos'
+    delay(configData.servoSpeed);                       // waits 15ms for the servo to reach the position
+  }
+}
+   servo.detach();
+ }
+ 
+}
 
 void sendSMS() {
 
