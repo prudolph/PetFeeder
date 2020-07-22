@@ -1,38 +1,68 @@
-.App {
+
+
+#root {
   text-align: center;
-}
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
+  width: 100vw;
+  height:100vh;
+  background-color: #ECECEC;
+  font-family: 'Noto Serif', serif;
+  
 }
-
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
-}
-
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+.container{
+  width: 70%;
+  height:100%;
+  margin:0 auto;
   justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+
 }
 
-.App-link {
-  color: #61dafb;
+.controls{
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  height:10%;
+
+  background-color: #F3D250;
+  
+  
+}
+button{
+  height:60%;
+  border-radius: 2px;
+border-width:1px;
+outline: none;
+background-color: #ECECEC;
+color:black;
+font-family: 'Noto Serif', serif;
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.dateEntry{
+
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  height:20%;
+  background-color:#FC8888;
+  margin:10% 0;
+  width: 100%;
+
 }
+
+.feedDatesContainer {
+  border-radius: 12.5px;
+}
+
+.feedDate{
+  display: flex;
+justify-content: space-evenly;
+align-content: center;
+background-color: #90ccf4;
+  margin:10px;
+  height:50px;;
+  
+  color:whitesmoke;
+
+}
+
+

@@ -219,6 +219,7 @@ void setupServer(){
   server.on("/api/addfeeddate", HTTP_POST, [](AsyncWebServerRequest * request) {
     int params = request->params();
     AsyncWebParameter* p = request->getParam(0);
+      Serial.print("Adding Feeding time");
     //Serial.printf("POST PARAM [%s]: %s\n", p->name().c_str(), p->value().c_str());
     time_t epochVal = atol(p->name().c_str());
     int index = addfeeding(epochVal, false);
@@ -234,10 +235,11 @@ void setupServer(){
       time_t timestamp = feedDates[i].feedDate;
       bool daily = feedDates[i].daily;
       bool completed = feedDates[i].completed;
-      currentFeedDates+="{\"index\":"+String(i)+",\"time\":"+String(timestamp)+",\"daily\":"+String(daily)+"},";
+      currentFeedDates+="{\"index\":"+String(i)+",\"time\":"+String(timestamp)+",\"daily\":"+String(daily)+",\"completed\":"+String(completed)+"},";
     }
- 
-    currentFeedDates=currentFeedDates.substring(0,currentFeedDates.length() -1);
+
+    //only remove last char if there are feeding dates
+    if(currentFeedDates.length()>1)currentFeedDates=currentFeedDates.substring(0,currentFeedDates.length() -1);
     currentFeedDates+="]";
     char buf[100];
     sprintf(buf, "{\"task\":\"addfeedingtime\",\"status\":\"success\" }");
@@ -292,14 +294,20 @@ void setupServer(){
   }
 
 int addfeeding(time_t feedingTimestamp, bool daily ) {
-  Serial.print("adding feeding time: ");
+  Serial.print("Adding feeding time: ");
   Serial.println(feedingTimestamp);
+
+  Serial.print("Current Number of Feedings ");
+  Serial.println(feedDatesCount);
+
   if (feedDatesCount + 1 <= MAX_FEEDINGS) {
     FeedDate newFeeding;
     newFeeding.feedDate = feedingTimestamp;
     newFeeding.daily = daily;
     newFeeding.completed = false;
     feedDates[feedDatesCount++] = newFeeding;
+
+    
 
     EEPROM.put(feedingCountAddress, feedDatesCount);
     EEPROM.put(feedingDataAddress, feedDates);
@@ -340,7 +348,7 @@ int removefeeding(int index ) {
 void loop() {
   timeClient.update();
   checkTriggeredFeedTimes();
-  //delay(500);
+  delay(500);
 
 }
 
@@ -353,11 +361,15 @@ void checkTriggeredFeedTimes() {
       Serial.print("Current Epoch Time: ");
       Serial.println(epochTime);
 
-      Serial.printf("Feeding Triggered [%d]: Time: %lu \n", i, feedDates[i].feedDate);
+      Serial.printf("Feeding Triggered [%d]: Time: %lu  completed:%d\n", i, feedDates[i].feedDate,feedDates[i].completed);
+      Serial.println("---------\n\n");
+
+      
       feedDates[i].completed = true;
       openLid();
       delay(1000);
       closeLid();
+      
       EEPROM.put( feedingDataAddress , feedDates );
       EEPROM.commit();
     }
@@ -373,18 +385,7 @@ void openLid() {
   Serial.println("Open Feeder");
 
   int currentPosition = servo.read();
-  Serial.println("Current Pos");
-  Serial.println(currentPosition);
-
-  Serial.println("Target Pos");
-  Serial.println(configData.openPos);
-
   for (int pos = currentPosition ; pos >= configData.openPos; pos -= 1) { // goes from 0 degrees to 180 degrees
-    Serial.println("-");
-    Serial.print("Current Pos");
-    Serial.print( pos);
-    if (pos == configData.openPos) break;
-    // in steps of 1 degree
     servo.write(pos);              // tell servo to go to position in variable 'pos'
     delay(configData.servoSpeed);                       // waits 15ms for the servo to reach the position
   }
@@ -399,18 +400,8 @@ void closeLid() {
   Serial.println("Close Feeder");
 
   int currentPosition = servo.read();
-  Serial.println("Current Pos");
-  Serial.println(currentPosition);
-
-  Serial.println("Target Pos");
-  Serial.println(configData.closePos);
-
   for (int pos = currentPosition ; pos <= configData.closePos; pos += 1) { // goes from 0 degrees to 180 degrees
-    Serial.println("+");
-    Serial.print("Current Pos");
-    Serial.print( servo.read());
-    if (pos == configData.closePos) break;
-    // in steps of 1 degree
+    
     servo.write(pos);              // tell servo to go to position in variable 'pos'
     delay(configData.servoSpeed);                       // waits 15ms for the servo to reach the position
   }
@@ -422,15 +413,8 @@ void closeLid() {
 void setLidPos(int targetPos) {
   if(targetPos>=0 && targetPos<180 ){
   servo.attach(0);
-
-  Serial.println("Open Feeder");
-
   int currentPosition = servo.read();
-  Serial.println("Current Pos");
-  Serial.println(currentPosition);
-
-  Serial.println("Target Pos");
-  Serial.println(targetPos);
+ 
 
 if(currentPosition>targetPos){
   for (int pos = currentPosition ; pos > targetPos; pos-=1)  { // goes from 0 degrees to 180 degrees
