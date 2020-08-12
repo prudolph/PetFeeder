@@ -166,7 +166,14 @@ class App extends React.Component {
         const timeOffestSeconds = TIME_OFFSET_HOURS * SEC_IN_HOUR;
         const feedingTimeStamp = Math.floor((this.state.currentDate.getTime() / 1000))
         console.log("Adding date: ", feedingTimeStamp);
-        const response = await axios.post('/api/addfeeddate?' + feedingTimeStamp)
+        let response="";
+        if(this.state.daily){
+           response = await axios.post('/api/addfeedtime?' + feedingTimeStamp)
+        }else{
+           response = await axios.post('/api/addfeeddate?' + feedingTimeStamp)
+        }
+        
+        
         this.getFeedingTimes();
         return resolve(response)
       }
@@ -209,11 +216,11 @@ class App extends React.Component {
         selected={this.state.currentDate}
         onChange={date => this.setState({ currentDate: date }, () => { console.log("updated: ", this.state.currentDate) })}
         showTimeSelect
-        showTimeSelectOnly={this.state.daily}
+        //showTimeSelectOnly={this.state.daily}
         timeFormat="hh:mm aa"
         timeIntervals={1}
         timeCaption="time"
-        dateFormat={this.state.daily ? "hh:mm aa" : "MMMM d, yyyy h:mm aa"}
+        dateFormat={"MMMM d, yyyy h:mm aa"}
       />
 
       <ToggleButton

@@ -33,6 +33,8 @@ const char* ssid     = "beard_ubt";         // The SSID (name) of the Wi-Fi netw
 const char* password = "Northstar1";     // The password of the Wi-Fi network
 
 
+bool lidOpenRequested=false;
+bool lidCloseRequested=true;
 
 
 // ConfigData
@@ -67,7 +69,7 @@ void sendSMS();
 unsigned long getRemainingTime();
 
 void setup() {
-
+  servo.attach(4);
   Serial.begin(115200);
   delay(500);
      
@@ -133,19 +135,22 @@ void setupServer(){
 
    //Dispense Control APIS
   server.on("/api/open", HTTP_GET, [](AsyncWebServerRequest * request) {
-    openLid();
+    //openLid();
+
+    lidOpenRequested=true;
     request->send(200, "text/json", "{\"task\":\"open\",\"status\":\"complete\"}");
   });
 
   server.on("/api/close", HTTP_GET, [](AsyncWebServerRequest * request) {
-    closeLid();
+    //closeLid();
+    lidCloseRequested=true;
+    
     request->send(200, "text/json", "{\"task\":\"close\",\"status\":\"complete\"}");
   });
 
   server.on("/api/dispense", HTTP_GET, [](AsyncWebServerRequest * request) {
-    closeLid(); delay(500);
-    openLid();  delay(500);
-    closeLid();
+    lidOpenRequested=true;
+    lidCloseRequested=true;
     request->send(200, "text/json", "{'task':'dispense','status':'complete'}");
   });
 
@@ -179,7 +184,7 @@ void setupServer(){
     int paramVal = atoi(p->name().c_str());
     configData.openPos = paramVal;
 
-    setLidPos(  configData.openPos);
+    lidOpenRequested=true;
     EEPROM.put(configDataAddress, configData);
     EEPROM.commit();
     Serial.println("Old values are: openpos" + String(configData.openPos) + ", closePos" + String(configData.closePos));
@@ -194,7 +199,7 @@ void setupServer(){
     //Serial.printf("POST PARAM [%s]: %s\n", p->name().c_str(), p->value().c_str());
     int paramVal = atoi(p->name().c_str());
     configData.closePos = paramVal;
-     setLidPos(  configData.closePos);
+    lidCloseRequested=true;
     EEPROM.put(configDataAddress, configData);
     EEPROM.commit();
     Serial.println("Old values are: openpos" + String(configData.openPos) + ", closePos" + String(configData.closePos));
@@ -223,6 +228,19 @@ void setupServer(){
     //Serial.printf("POST PARAM [%s]: %s\n", p->name().c_str(), p->value().c_str());
     time_t epochVal = atol(p->name().c_str());
     int index = addfeeding(epochVal, false);
+
+    char buf[100];
+    sprintf(buf, "{\"task\":\"addfeedingtime\",\"status\":\"success\",\"index\":\"%d\" }", index);
+    request->send(200, "text/json", buf);
+  });
+
+ server.on("/api/addfeedtime", HTTP_POST, [](AsyncWebServerRequest * request) {
+    int params = request->params();
+    AsyncWebParameter* p = request->getParam(0);
+      Serial.print("Adding Feeding time");
+    //Serial.printf("POST PARAM [%s]: %s\n", p->name().c_str(), p->value().c_str());
+    time_t epochVal = atol(p->name().c_str());
+    int index = addfeeding(epochVal, true);
 
     char buf[100];
     sprintf(buf, "{\"task\":\"addfeedingtime\",\"status\":\"success\",\"index\":\"%d\" }", index);
@@ -308,9 +326,9 @@ int addfeeding(time_t feedingTimestamp, bool daily ) {
     feedDates[feedDatesCount++] = newFeeding;
 
     
-
-    EEPROM.put(feedingCountAddress, feedDatesCount);
     EEPROM.put(feedingDataAddress, feedDates);
+    EEPROM.put(feedingCountAddress, feedDatesCount);
+   
     EEPROM.commit();
     return feedDatesCount;
 
@@ -348,6 +366,18 @@ int removefeeding(int index ) {
 void loop() {
   timeClient.update();
   checkTriggeredFeedTimes();
+  if(lidOpenRequested){
+    openLid();
+    delay(1000);
+    lidOpenRequested=false;
+  }
+
+  if(lidCloseRequested){
+    closeLid();
+    lidCloseRequested=false;
+    delay(1000);
+  }
+  
   delay(500);
 
 }
@@ -357,7 +387,7 @@ void checkTriggeredFeedTimes() {
 
   for (int i = 0; i <= feedDatesCount; i++) {
     
-    if (epochTime >= feedDates[i].feedDate && !feedDates[i].completed ) {
+    if (epochTime >= feedDates[i].feedDate && feedDates[i].feedDate!=0 && !feedDates[i].completed ) {
       Serial.print("Current Epoch Time: ");
       Serial.println(epochTime);
 
@@ -365,10 +395,23 @@ void checkTriggeredFeedTimes() {
       Serial.println("---------\n\n");
 
       
-      feedDates[i].completed = true;
-      openLid();
-      delay(1000);
-      closeLid();
+
+      lidOpenRequested=true;
+      lidCloseRequested=true;
+
+      if(feedDates[i].daily){
+        //if daily add 24 hrs to trigger time 
+        //time_t futureDate = feedDates[i].feedDate + 86400;
+         time_t futureDate = feedDates[i].feedDate + (60*5);
+        while(futureDate<epochTime){
+          futureDate  += (60*5);
+        }
+        
+        feedDates[i].feedDate = futureDate;
+      }
+      else{
+        feedDates[i].completed = true;
+      }
       
       EEPROM.put( feedingDataAddress , feedDates );
       EEPROM.commit();
@@ -380,58 +423,40 @@ void checkTriggeredFeedTimes() {
 
 void openLid() {
 
-  servo.attach(0);
-
-  Serial.println("Open Feeder");
-
+  //servo.attach(0);
   int currentPosition = servo.read();
-  for (int pos = currentPosition ; pos >= configData.openPos; pos -= 1) { // goes from 0 degrees to 180 degrees
-    servo.write(pos);              // tell servo to go to position in variable 'pos'
+  Serial.println("Open Feeder");
+   Serial.printf("Current Position: %d Open Position:%d Speed:%d\n",currentPosition,configData.openPos, configData.servoSpeed );
+ 
+
+  
+  for (currentPosition=servo.read() ; currentPosition >= configData.openPos; --currentPosition) { // goes from 0 degrees to 180 degrees
+    servo.write(currentPosition);              // tell servo to go to position in variable 'pos'
     delay(configData.servoSpeed);                       // waits 15ms for the servo to reach the position
   }
 
-  servo.detach();
+ // servo.detach();
 }
 
 
 void closeLid() {
 
-  servo.attach(0);
-  Serial.println("Close Feeder");
 
-  int currentPosition = servo.read();
+    int currentPosition = servo.read();
+  Serial.println("Close Feeder");
+ Serial.printf("Current Position: %d Close Position:%d Speed:%d\n",currentPosition,configData.closePos, configData.servoSpeed );
+ 
+
   for (int pos = currentPosition ; pos <= configData.closePos; pos += 1) { // goes from 0 degrees to 180 degrees
     
     servo.write(pos);              // tell servo to go to position in variable 'pos'
     delay(configData.servoSpeed);                       // waits 15ms for the servo to reach the position
   }
 
-  servo.detach();
+  //servo.detach();
 }
 
 
-void setLidPos(int targetPos) {
-  if(targetPos>=0 && targetPos<180 ){
-  servo.attach(0);
-  int currentPosition = servo.read();
- 
-
-if(currentPosition>targetPos){
-  for (int pos = currentPosition ; pos > targetPos; pos-=1)  { // goes from 0 degrees to 180 degrees
-    servo.write(pos);              // tell servo to go to position in variable 'pos'
-    delay(configData.servoSpeed);                       // waits 15ms for the servo to reach the position
-  }
-}else{
-
- for (int pos = currentPosition ; pos <= targetPos; pos+=1) { 
-    servo.write(pos);              // tell servo to go to position in variable 'pos'
-    delay(configData.servoSpeed);                       // waits 15ms for the servo to reach the position
-  }
-}
-   servo.detach();
- }
- 
-}
 
 void sendSMS() {
 
