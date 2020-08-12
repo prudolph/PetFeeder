@@ -2,7 +2,6 @@
 
 #include <Servo.h>
 
-
 //Wifi Libraries
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>// for get request
@@ -39,8 +38,8 @@ bool lidCloseRequested=true;
 
 // ConfigData
 struct {
-  int openPos = 5;
-  int closePos = 155;
+  int openPos = 0;
+  int closePos = 100;
   int servoSpeed = 15;
 } configData;
 uint configDataAddress = 0;
@@ -69,7 +68,7 @@ void sendSMS();
 unsigned long getRemainingTime();
 
 void setup() {
-  servo.attach(4);
+ 
   Serial.begin(115200);
   delay(500);
      
@@ -102,9 +101,7 @@ void setup() {
   //get feeddates
   EEPROM.get( feedingDataAddress , feedDates );
 
-  //TESTING ONLY 
-  configData.openPos = 0;
-  configData.closePos = 180;
+
    
   if (!SPIFFS.begin()) {Serial.println("An Error has occurred while mounting SPIFFS");}
 
@@ -423,7 +420,7 @@ void checkTriggeredFeedTimes() {
 
 void openLid() {
 
-  //servo.attach(0);
+  servo.attach(4);
   int currentPosition = servo.read();
   Serial.println("Open Feeder");
    Serial.printf("Current Position: %d Open Position:%d Speed:%d\n",currentPosition,configData.openPos, configData.servoSpeed );
@@ -435,13 +432,13 @@ void openLid() {
     delay(configData.servoSpeed);                       // waits 15ms for the servo to reach the position
   }
 
- // servo.detach();
+  servo.detach();
 }
 
 
 void closeLid() {
 
-
+servo.attach(4);
     int currentPosition = servo.read();
   Serial.println("Close Feeder");
  Serial.printf("Current Position: %d Close Position:%d Speed:%d\n",currentPosition,configData.closePos, configData.servoSpeed );
@@ -453,7 +450,7 @@ void closeLid() {
     delay(configData.servoSpeed);                       // waits 15ms for the servo to reach the position
   }
 
-  //servo.detach();
+  servo.detach();
 }
 
 
